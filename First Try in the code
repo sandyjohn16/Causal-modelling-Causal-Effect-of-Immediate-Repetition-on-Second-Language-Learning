@@ -1,0 +1,173 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.utils import resample
+
+
+# ==============================
+# 1. LOAD RAW SLAM DATA
+# ==============================
+
+file_path = "/content/drive/MyDrive/practice/data_es_en/es_en.slam.20190204.train"
+
+data = []
+current_user = None
+
+with open(file_path, "r") as f:
+    for line in f:
+        if line.startswith("# user:"):
+            current_user = line.split()[1].replace("user:", "")
+        elif not line.startswith("#"):
+            parts = line.strip().split()
+            if len(parts) == 7:
+                data.append([current_user] + parts)
+
+df = pd.DataFrame(data, columns=[
+    "user_id",
+    "instance_id",
+    "token",
+    "pos",
+    "morph",
+    "dep_rel",
+    "head",
+    "correct"
+])
+
+df["correct"] = df["correct"].astype(int)
+
+print("\nInitial Shape:", df.shape)
+print(df.head())
+print("\nInitial Class Distribution:")
+print(df["correct"].value_counts(normalize=True))
+
+
+# ==============================
+# 2. SORT PROPERLY (CRITICAL)
+# ==============================
+
+df = df.sort_values(["user_id", "instance_id"])
+df = df.reset_index(drop=True)
+
+
+# ==============================
+# 3. CREATE TREATMENT (IMMEDIATE REPETITION)
+# ==============================
+
+df["prev_token"] = df.groupby("user_id")["token"].shift(1)
+
+df["treatment"] = (
+    (df["token"] == df["prev_token"])
+).astype(int)
+
+print("\nTreatment Distribution:")
+print(df["treatment"].value_counts(normalize=True))
+
+
+# ==============================
+# 4. CREATE PREVIOUS CORRECTNESS
+# ==============================
+
+df["prev_correct"] = (
+    df.groupby(["user_id", "token"])["correct"]
+    .shift(1)
+)
+
+df = df.dropna(subset=["prev_correct"])
+
+
+# ==============================
+# 5. VISUALIZE BEFORE BALANCING
+# ==============================
+
+plt.figure()
+df["correct"].value_counts().plot(kind="bar")
+plt.title("Class Distribution (Before Balancing)")
+plt.show()
+
+print("\nClass Distribution (After History Filter):")
+print(df["correct"].value_counts(normalize=True))
+
+
+raw_accuracy = df.groupby("treatment")["correct"].mean()
+
+plt.figure()
+raw_accuracy.plot(kind="bar")
+plt.title("Raw Accuracy by Treatment")
+plt.show()
+
+print("\nRaw Accuracy:")
+print(raw_accuracy)
+
+
+print("\nTreatment Probability by Previous Correctness:")
+print(df.groupby("prev_correct")["treatment"].mean())
+
+
+# ==============================
+# 6. BALANCE DATA (UNDERSAMPLING)
+# ==============================
+
+majority = df[df["correct"] == 0]
+minority = df[df["correct"] == 1]
+
+majority_downsampled = resample(
+    majority,
+    replace=False,
+    n_samples=len(minority),
+    random_state=42
+)
+
+df_balanced = pd.concat([majority_downsampled, minority])
+
+print("\nBalanced Class Distribution:")
+print(df_balanced["correct"].value_counts())
+
+
+# ==============================
+# 7. VISUALIZE AFTER BALANCING
+# ==============================
+
+plt.figure()
+df_balanced["correct"].value_counts().plot(kind="bar")
+plt.title("Class Distribution (After Balancing)")
+plt.show()
+
+balanced_accuracy = df_balanced.groupby("treatment")["correct"].mean()
+
+plt.figure()
+balanced_accuracy.plot(kind="bar")
+plt.title("Accuracy by Treatment (Balanced)")
+plt.show()
+
+print("\nBalanced Accuracy:")
+print(balanced_accuracy)
+
+
+# ==============================
+# 8. LOGISTIC REGRESSION MODEL
+# ==============================
+
+X = df_balanced[["treatment", "prev_correct"]]
+y = df_balanced["correct"]
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+model = LogisticRegression()
+model.fit(X_train, y_train)
+
+y_prob = model.predict_proba(X_test)[:, 1]
+y_pred = model.predict(X_test)
+
+print("\nModel Evaluation:")
+print("AUC:", roc_auc_score(y_test, y_prob))
+print(classification_report(y_test, y_pred))
+
+coef = model.coef_[0][0]
+print("\nTreatment Coefficient:", coef)
+print("Odds Ratio:", np.exp(coef))
