@@ -1,0 +1,163 @@
+# ==========================================
+# DUOLINGO SLAM – CAUSAL ANALYSIS PIPELINE
+# Treatment Effect of Immediate Repetition
+# ==========================================
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+from sklearn.linear_model import LogisticRegression
+
+# ==========================================
+# 1. LOAD RAW SLAM DATA
+# ==========================================
+
+file_path = "/content/drive/MyDrive/practice/data_es_en/es_en.slam.20190204.train"
+
+data = []
+current_user = None
+
+with open(file_path, "r") as f:
+    for line in f:
+        if line.startswith("# user:"):
+            current_user = line.split()[1].replace("user:", "")
+        elif not line.startswith("#"):
+            parts = line.strip().split()
+            if len(parts) == 7:
+                data.append([current_user] + parts)
+
+df = pd.DataFrame(data, columns=[
+    "user_id",
+    "instance_id",
+    "token",
+    "pos",
+    "morph",
+    "dep_rel",
+    "head",
+    "correct"
+])
+
+df["correct"] = df["correct"].astype(int)
+
+print("Initial shape:", df.shape)
+
+# ==========================================
+# 2. SORT SEQUENTIALLY (CRITICAL)
+# ==========================================
+
+df = df.sort_values(["user_id", "instance_id"]).reset_index(drop=True)
+
+# ==========================================
+# 3. DEFINE TREATMENT (Immediate Repetition)
+# ==========================================
+
+df["prev_token"] = df.groupby("user_id")["token"].shift(1)
+
+df["treatment"] = (
+    (df["token"] == df["prev_token"])
+).astype(int)
+
+# ==========================================
+# 4. DEFINE CONFOUNDER (Previous Mastery)
+# ==========================================
+
+df["prev_correct"] = (
+    df.groupby(["user_id", "token"])["correct"]
+    .shift(1)
+)
+
+df = df.dropna(subset=["prev_correct"])
+
+print("After history filter:", df.shape)
+
+# ==========================================
+# 5. DESCRIPTIVE ANALYSIS
+# ==========================================
+
+print("\nTreatment distribution:")
+print(df["treatment"].value_counts(normalize=True))
+
+print("\nOutcome distribution:")
+print(df["correct"].value_counts(normalize=True))
+
+raw_effect = df.groupby("treatment")["correct"].mean()
+print("\nRaw difference in accuracy:")
+print(raw_effect)
+
+# ==========================================
+# 6. ESTIMATE PROPENSITY SCORE
+# P(Treatment | Confounders)
+# ==========================================
+
+ps_model = LogisticRegression()
+
+X_ps = df[["prev_correct"]]
+y_ps = df["treatment"]
+
+ps_model.fit(X_ps, y_ps)
+
+df["propensity"] = ps_model.predict_proba(X_ps)[:, 1]
+
+# Avoid division instability
+df["propensity"] = np.clip(df["propensity"], 0.01, 0.99)
+
+# ==========================================
+# 7. INVERSE PROBABILITY WEIGHTING (IPW)
+# ==========================================
+
+df["weight"] = np.where(
+    df["treatment"] == 1,
+    1 / df["propensity"],
+    1 / (1 - df["propensity"])
+)
+
+# Optional: stabilize weights
+df["weight"] = df["weight"] / np.mean(df["weight"])
+
+print("\nWeight summary:")
+print(df["weight"].describe())
+
+# ==========================================
+# 8. ESTIMATE AVERAGE TREATMENT EFFECT (ATE)
+# ==========================================
+
+treated = df[df["treatment"] == 1]
+control = df[df["treatment"] == 0]
+
+ATE = (
+    np.average(treated["correct"], weights=treated["weight"]) -
+    np.average(control["correct"], weights=control["weight"])
+)
+
+print("\nEstimated Average Treatment Effect (ATE):", ATE)
+
+# ==========================================
+# 9. WEIGHTED OUTCOME MODEL
+# ==========================================
+
+outcome_model = LogisticRegression()
+
+X_outcome = df[["treatment"]]
+y_outcome = df["correct"]
+
+outcome_model.fit(X_outcome, y_outcome, sample_weight=df["weight"])
+
+coef = outcome_model.coef_[0][0]
+odds_ratio = np.exp(coef)
+
+print("\nWeighted Treatment Coefficient:", coef)
+print("Causal Odds Ratio:", odds_ratio)
+
+# ==========================================
+# 10. VISUALIZATION
+# ==========================================
+
+weighted_accuracy = df.groupby("treatment").apply(
+    lambda x: np.average(x["correct"], weights=x["weight"])
+)
+
+plt.figure()
+weighted_accuracy.plot(kind="bar")
+plt.title("Weighted Accuracy by Treatment (Causal Estimate)")
+plt.show()
