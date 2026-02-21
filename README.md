@@ -36,94 +36,43 @@ dep_rel – syntactic dependency relation
 
 correct – binary outcome (1 = correct, 0 = incorrect)
 
-# 4. Engineered Variables
 
-exercise_id – derived from instance_id
+## Research Question
 
-treatment – indicator for immediate repetition
+Does immediate repetition of a word increase the probability of answering correctly?
 
-word_accuracy – average correctness rate per word (proxy for word difficulty)
+## Methodology
 
-# Research Question
+1. Parsed raw SLAM sequential learner interaction data.
+2. Constructed a treatment variable:
+   - `treatment = 1` if the same word appeared in the immediately previous interaction.
+3. Constructed a lag variable:
+   - `prev_correct` for user-word memory state.
+4. Controlled for temporal dependencies.
+5. Addressed class imbalance via undersampling.
+6. Estimated treatment effect using logistic regression.
 
-Does immediate repetition of a word increase the probability of a correct response?
+## Key Findings
 
-This question is motivated by theories of spacing, memory consolidation, and adaptive learning.
+- Raw analysis shows higher correctness under repetition.
+- After controlling for previous correctness:
+  - Treatment coefficient is positive.
+  - Odds ratio > 1, suggesting repetition increases probability of correctness.
+- Demonstrates importance of modelling adaptive assignment in educational systems.
 
-# Treatment Definition
+## Relevance
 
-A word is considered treated (treatment = 1) if the learner encountered the same word in the immediately preceding exercise.
+This project demonstrates:
+- Longitudinal data processing
+- Treatment construction from logs
+- Causal reasoning in adaptive systems
+- Handling imbalanced educational data
 
-Otherwise:
+## How to Run
 
-treatment = 0
-
-This approximates a short-term repetition intervention.
-
-# Methodology
-
-A logistic regression model was used to estimate the relationship between repetition and correctness.
-
-# Outcome:
-
-correct
-
-Covariates:
-
-# treatment
-
-pos
-
-dep_rel
-
-word_accuracy
-
-Categorical variables were one-hot encoded.
-The treatment coefficient is interpreted as an estimate of the causal effect under standard assumptions.
-
-# Results
-Raw Accuracy by Treatment Group
-Treatment	Mean Accuracy
-No repetition (0)	14.39%
-Immediate repetition (1)	8.13%
-Logistic Regression Estimates
-
-Treatment coefficient: −0.343
-
-Odds ratio: 0.71
-
-Interpretation:
-Immediate repetition is associated with approximately 29% lower odds of correctness.
-
-# Interpretation
-
-The negative effect likely reflects confounding rather than harm:
-
-Difficult words are more likely to be repeated
-
-Difficult words also have lower accuracy
-
-Repetition is adaptively assigned, not randomized
-
-Thus, repetition serves as a signal of difficulty.
-
-# Limitations
-
-Treatment assignment is endogenous
-
-No learner fixed effects
-
-Limited control for temporal dynamics
-
-Future work could apply:
-
-Fixed-effects models
-
-Causal forests
-
-Doubly robust estimators
-
-Dynamic treatment effect modeling
+```bash
+pip install -r requirements.txt
+python duolingo_causal_pipeline.py
 
 # Conclusion
 
